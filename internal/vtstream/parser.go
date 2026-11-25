@@ -8,7 +8,10 @@
 // coming from the remote side is never held in memory.
 package vtstream
 
-import "strconv"
+import (
+	"bytes"
+	"strconv"
+)
 
 // Kind tells what a Token is.
 type Kind int
@@ -148,6 +151,12 @@ func (p *Parser) Feed(data []byte, emit func(Token)) {
 			if textStart < 0 {
 				textStart = i
 			}
+			// Skip ahead to the next escape in one scan.
+			if j := bytes.IndexByte(data[i+1:], 0x1b); j >= 0 {
+				i += j
+			} else {
+				i = len(data) - 1
+			}
 
 		case stEsc:
 			switch {
@@ -243,6 +252,12 @@ func (p *Parser) Feed(data []byte, emit func(Token)) {
 			if strStart < 0 {
 				strStart = i
 			}
+			// Skip plain string bytes in one scan.
+			if j := indexEscOrBel(data[i+1:]); j >= 0 {
+				i += j
+			} else {
+				i = len(data) - 1
+			}
 
 		case stStringEsc:
 			if b == '\\' {
@@ -276,7 +291,13 @@ func (p *Parser) Feed(data []byte, emit func(Token)) {
 				p.emitAPC(emit, 1)
 				continue
 			}
-			p.appendAPC(b)
+			// Copy everything up to the next ESC or BEL at once.
+			end := len(data)
+			if j := indexEscOrBel(data[i:]); j >= 0 {
+				end = i + j
+			}
+			p.appendAPC(data[i:end])
+			i = end - 1
 
 		case stAPCEsc:
 			if b == '\\' {
@@ -304,15 +325,27 @@ func (p *Parser) Feed(data []byte, emit func(Token)) {
 	}
 }
 
-func (p *Parser) appendAPC(b byte) {
+func (p *Parser) appendAPC(chunk []byte) {
 	if p.overrun {
 		return
 	}
-	if len(p.buf) >= MaxAPC {
+	if len(p.buf)+len(chunk) > MaxAPC {
 		p.overrun = true
 		return
 	}
-	p.buf = append(p.buf, b)
+	p.buf = append(p.buf, chunk...)
+}
+
+// indexEscOrBel returns the index of the first ESC or BEL in s, or -1.
+func indexEscOrBel(s []byte) int {
+	e := bytes.IndexByte(s, 0x1b)
+	if e < 0 {
+		return bytes.IndexByte(s, 0x07)
+	}
+	if b := bytes.IndexByte(s[:e], 0x07); b >= 0 {
+		return b
+	}
+	return e
 }
 
 func (p *Parser) emitEsc(emit func(Token)) {

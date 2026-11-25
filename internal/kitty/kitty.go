@@ -145,10 +145,13 @@ func (a *Assembler) finish() (*Command, error) {
 func (a *Assembler) Pending() bool { return a.pending != nil }
 
 func decodeBase64(raw []byte) ([]byte, error) {
-	clean := raw[:0:0]
-	for _, b := range raw {
-		if b != '\n' && b != '\r' && b != ' ' {
-			clean = append(clean, b)
+	clean := raw
+	if bytes.ContainsAny(raw, "\n\r ") {
+		clean = make([]byte, 0, len(raw))
+		for _, b := range raw {
+			if b != '\n' && b != '\r' && b != ' ' {
+				clean = append(clean, b)
+			}
 		}
 	}
 	out := make([]byte, base64.StdEncoding.DecodedLen(len(clean)))

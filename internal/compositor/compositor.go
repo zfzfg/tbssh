@@ -182,13 +182,13 @@ func (c *Compositor) AllocID() uint32 {
 	}
 }
 
-// Transmit stores image data under id, replacing older data.
+// Transmit stores image data under id, replacing older data. It takes
+// ownership of pix; the caller must not touch it afterwards.
 func (c *Compositor) Transmit(id uint32, number int, w, h int, pix []byte) {
 	if old, ok := c.images[id]; ok {
 		c.imageBytes -= len(old.Pix)
 	}
-	own := make([]byte, len(pix))
-	copy(own, pix)
+	own := pix[:len(pix):len(pix)]
 	c.seq++
 	c.images[id] = &Image{W: w, H: h, Pix: own, Number: number, seq: c.seq}
 	if number != 0 {
@@ -564,6 +564,10 @@ func (c *Compositor) blit(p *Placement, area Rect) {
 		return
 	}
 	scaled := p.dest.W != p.src.W || p.dest.H != p.src.H
+	if !scaled {
+		c.blitUnscaled(p, img, area)
+		return
+	}
 	for y := area.Y; y < area.Y+area.H; y++ {
 		sy := p.src.Y + (y-p.dest.Y)*p.src.H/p.dest.H
 		if !scaled {
@@ -602,6 +606,55 @@ func (c *Compositor) blit(p *Placement, area Rect) {
 			d[2] = byte((int(s[2])*int(a) + int(under[2])*ia) / 255)
 			d[3] = 255
 			c.Covered[di] = true
+		}
+	}
+}
+
+// blitUnscaled is blit for a 1:1 placement: whole rows are walked with
+// plain slices, and fully opaque rows are copied in one go.
+func (c *Compositor) blitUnscaled(p *Placement, img *Image, area Rect) {
+	sx0 := p.src.X + (area.X - p.dest.X)
+	for y := area.Y; y < area.Y+area.H; y++ {
+		sy := p.src.Y + (y - p.dest.Y)
+		s := img.Pix[(sy*img.W+sx0)*4 : (sy*img.W+sx0+area.W)*4]
+		d := c.Canvas[(y*c.W+area.X)*4 : (y*c.W+area.X+area.W)*4]
+		cov := c.Covered[y*c.W+area.X : y*c.W+area.X+area.W]
+		opaque := true
+		for i := 3; i < len(s); i += 4 {
+			if s[i] != 255 {
+				opaque = false
+				break
+			}
+		}
+		if opaque {
+			copy(d, s)
+			for i := range cov {
+				cov[i] = true
+			}
+			continue
+		}
+		for i := range cov {
+			px := s[i*4 : i*4+4 : i*4+4]
+			a := px[3]
+			if a == 0 {
+				continue
+			}
+			dp := d[i*4 : i*4+4 : i*4+4]
+			if a == 255 {
+				dp[0], dp[1], dp[2], dp[3] = px[0], px[1], px[2], 255
+				cov[i] = true
+				continue
+			}
+			under := c.bg
+			if cov[i] {
+				under = [3]byte{dp[0], dp[1], dp[2]}
+			}
+			ia := 255 - int(a)
+			dp[0] = byte((int(px[0])*int(a) + int(under[0])*ia) / 255)
+			dp[1] = byte((int(px[1])*int(a) + int(under[1])*ia) / 255)
+			dp[2] = byte((int(px[2])*int(a) + int(under[2])*ia) / 255)
+			dp[3] = 255
+			cov[i] = true
 		}
 	}
 }

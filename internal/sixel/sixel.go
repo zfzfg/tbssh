@@ -42,16 +42,33 @@ func cubeLevel(v uint8, threshold uint32) int {
 	return int(l)
 }
 
+// levelLUT[t][v] = cubeLevel(v, t), with the cube weights folded in.
+var levelLUT [16][256]uint8
+
+// grayLUT[r+g+b] = gray palette index.
+var grayLUT [3*255 + 1]uint16
+
+func init() {
+	for t := 0; t < 16; t++ {
+		for v := 0; v < 256; v++ {
+			levelLUT[t][v] = uint8(cubeLevel(uint8(v), uint32(t)))
+		}
+	}
+	for sum := range grayLUT {
+		luma := uint32(sum) / 3
+		grayLUT[sum] = uint16(cubeSize + (luma*(grayLevels-1)+127)/255)
+	}
+}
+
 // Quantize maps a color at screen position x,y to a palette index.
 func Quantize(r, g, b uint8, x, y int) uint16 {
 	hi := max(r, g, b)
 	lo := min(r, g, b)
 	if hi-lo < grayChroma {
-		luma := (uint32(r) + uint32(g) + uint32(b)) / 3
-		return uint16(cubeSize + (luma*(grayLevels-1)+127)/255)
+		return grayLUT[int(r)+int(g)+int(b)]
 	}
-	t := bayer[y&3][x&3]
-	return uint16(cubeLevel(r, t)*36 + cubeLevel(g, t)*6 + cubeLevel(b, t))
+	lut := &levelLUT[bayer[y&3][x&3]]
+	return uint16(lut[r])*36 + uint16(lut[g])*6 + uint16(lut[b])
 }
 
 // PaletteRGB returns a palette entry's color.
@@ -71,7 +88,10 @@ type Screen struct {
 
 	// scratch
 	runs [PaletteSize][]run
+	cell []uint16 // band x width palette indices, skip for unchanged
 }
+
+const skip = 0xfffe
 
 type run struct {
 	x    int
@@ -161,36 +181,68 @@ func (s *Screen) Update(canvas []byte, covered []bool, damage []Rect, bg [3]byte
 		for i := range s.runs {
 			s.runs[i] = s.runs[i][:0]
 		}
+		// Quantize row by row (cache friendly), then walk the band column by
+		// column so each color's runs come out sorted by x and the six rows of
+		// a column merge into one sixel.
+		bw := x1 - x0
+		if cap(s.cell) < band*bw {
+			s.cell = make([]uint16, band*s.W)
+		}
+		cell := s.cell[:band*bw]
+		changed := false
+		bgIdx := [4][4]uint16{}
+		for ty := 0; ty < 4; ty++ {
+			for tx := 0; tx < 4; tx++ {
+				bgIdx[ty][tx] = Quantize(bg[0], bg[1], bg[2], tx, ty)
+			}
+		}
+		for y := top; y < bottom; y++ {
+			crow := cell[(y-top)*bw : (y-top+1)*bw]
+			srow := s.shown[y*s.W+x0 : y*s.W+x1]
+			cov := covered[y*s.W+x0 : y*s.W+x1]
+			pix := canvas[(y*s.W+x0)*4 : (y*s.W+x1)*4]
+			for i := range crow {
+				if cov[i] {
+					p := pix[i*4 : i*4+3 : i*4+3]
+					idx := Quantize(p[0], p[1], p[2], x0+i, y)
+					if srow[i] == idx {
+						crow[i] = skip
+						continue
+					}
+					srow[i] = idx
+					crow[i] = idx
+					changed = true
+				} else {
+					if srow[i] == notShown {
+						crow[i] = skip
+						continue
+					}
+					srow[i] = notShown
+					crow[i] = bgIdx[y&3][(x0+i)&3]
+					changed = true
+				}
+			}
+		}
 		any := false
-		// Column by column, so each color's runs come out sorted by x and the
-		// six rows of a column merge into one sixel.
-		for x := x0; x < x1; x++ {
-			for y := top; y < bottom; y++ {
-				bit := uint8(1) << uint(y-top)
-				at := y*s.W + x
-				var idx uint16
-				if covered[at] {
-					p := canvas[at*4 : at*4+3]
-					idx = Quantize(p[0], p[1], p[2], x, y)
-					if s.shown[at] == idx {
+		if changed {
+			rowsInBand := bottom - top
+			for i := 0; i < bw; i++ {
+				x := x0 + i
+				for r := 0; r < rowsInBand; r++ {
+					idx := cell[r*bw+i]
+					if idx == skip {
 						continue
 					}
-					s.shown[at] = idx
-				} else {
-					if s.shown[at] == notShown {
-						continue
+					bit := uint8(1) << uint(r)
+					list := s.runs[idx]
+					if n := len(list); n > 0 && list[n-1].x == x {
+						list[n-1].bits |= bit
+					} else {
+						list = append(list, run{x, bit})
 					}
-					idx = Quantize(bg[0], bg[1], bg[2], x, y)
-					s.shown[at] = notShown
+					s.runs[idx] = list
+					any = true
 				}
-				list := s.runs[idx]
-				if n := len(list); n > 0 && list[n-1].x == x {
-					list[n-1].bits |= bit
-				} else {
-					list = append(list, run{x, bit})
-				}
-				s.runs[idx] = list
-				any = true
 			}
 		}
 		if !any {

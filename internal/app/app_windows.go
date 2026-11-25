@@ -292,7 +292,8 @@ func interactive(cfg *sshclient.Config, args *sshclient.Args) int {
 		stdin.Write(p)
 		stdinMu.Unlock()
 	}
-	br := bridge.New(os.Stdout, writeRemote, bridge.Options{
+	out := newOutQueue(os.Stdout, 32<<20)
+	br := bridge.New(out, writeRemote, bridge.Options{
 		Cols: cols, Rows: rows,
 		Graphics:   graphics,
 		Background: caps.Background,
@@ -339,7 +340,7 @@ func interactive(cfg *sshclient.Config, args *sshclient.Args) int {
 	outDone := make(chan struct{})
 	go func() {
 		defer close(outDone)
-		buf := make([]byte, 64<<10)
+		buf := make([]byte, 256<<10)
 		for {
 			n, err := stdout.Read(buf)
 			if n > 0 {
@@ -438,6 +439,7 @@ func interactive(cfg *sshclient.Config, args *sshclient.Args) int {
 	case <-time.After(500 * time.Millisecond):
 	}
 	br.Close()
+	out.Close()
 	con.Restore()
 	logf("session ended: %v, stats %+v", waitErr, br.Stats)
 
