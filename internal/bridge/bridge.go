@@ -12,10 +12,10 @@ import (
 	"sync"
 	"time"
 
-	"tbssh/internal/compositor"
-	"tbssh/internal/kitty"
-	"tbssh/internal/sixel"
-	"tbssh/internal/vtstream"
+	"github.com/zfzfg/tbssh/internal/compositor"
+	"github.com/zfzfg/tbssh/internal/kitty"
+	"github.com/zfzfg/tbssh/internal/sixel"
+	"github.com/zfzfg/tbssh/internal/vtstream"
 )
 
 // Options configures a Bridge.

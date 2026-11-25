@@ -12,9 +12,9 @@ import (
 	"regexp"
 	"time"
 
-	"tbssh/internal/bridge"
-	"tbssh/internal/console"
-	"tbssh/internal/sshclient"
+	"github.com/zfzfg/tbssh/internal/bridge"
+	"github.com/zfzfg/tbssh/internal/console"
+	"github.com/zfzfg/tbssh/internal/sshclient"
 )
 
 // doctor prints what tbssh learns about the local terminal.

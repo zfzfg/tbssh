@@ -19,13 +19,14 @@ import (
 
 	"golang.org/x/crypto/ssh"
 
-	"tbssh/internal/bridge"
-	"tbssh/internal/console"
-	"tbssh/internal/sshclient"
+	"github.com/zfzfg/tbssh/internal/bridge"
+	"github.com/zfzfg/tbssh/internal/console"
+	"github.com/zfzfg/tbssh/internal/sshclient"
 )
 
-// Version is the tbssh version.
-const Version = "0.1.0"
+// Version is the tbssh version. Release builds set it with
+// -ldflags "-X github.com/zfzfg/tbssh/internal/app.Version=v1.2.3".
+var Version = "dev"
 
 const usage = `tbssh %s - ssh for Windows Terminal that shows kitty graphics (terminal-browser) as sixel
 

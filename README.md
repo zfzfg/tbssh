@@ -1,147 +1,218 @@
-# tbssh – terminal-browser über SSH in Windows Terminal
+# tbssh
 
-`tbssh` sorgt dafür, dass [terminal-browser](https://github.com/zenbu-labs/terminal-browser) auf einem
-Linux-Server auch dann ein echtes Browserbild zeigt, wenn du dich aus **PowerShell 7 in Windows Terminal**
-per `ssh` verbindest. Du verbindest dich weiter ganz normal mit `ssh user@server`.
+[![CI](https://github.com/zfzfg/tbssh/actions/workflows/ci.yml/badge.svg)](https://github.com/zfzfg/tbssh/actions/workflows/ci.yml)
+[![Release](https://img.shields.io/github/v/release/zfzfg/tbssh)](https://github.com/zfzfg/tbssh/releases/latest)
+[![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
 
-## Warum das nötig ist
+**See [terminal-browser](https://github.com/zenbu-labs/terminal-browser) running on a Linux server, rendered as real pixels inside Windows Terminal, over a plain `ssh user@server`.**
 
-terminal-browser zeichnet nur über das **kitty graphics protocol**. Windows Terminal kann dieses
-Protokoll nicht, aber **Sixel** (ab Version 1.22). Ohne Hilfe fällt terminal-browser deshalb auf
-einen groben Textmodus zurück.
+tbssh is a drop-in SSH client for PowerShell 7 on Windows. It passes your session through untouched,
+except for one thing: it catches the **kitty graphics** that terminal-browser draws and re-encodes them
+as **Sixel**, which Windows Terminal can display. You keep typing `ssh user@server`. Nothing has to be
+installed on the server.
 
-`tbssh` ist ein SSH-Client, der zwischen Server und Windows Terminal sitzt. Er leitet alles
-unverändert weiter und macht nur drei Dinge zusätzlich:
+<!-- Screenshot: add docs/screenshot.png and uncomment
+![terminal-browser over SSH in Windows Terminal](docs/screenshot.png)
+-->
 
-1. **kitty-Grafik abfangen:** Bilder, Teilbilder und Löschbefehle landen in einem lokalen
-   Compositor und werden als **Sixel** ausgegeben. Dabei werden nur Pixel übertragen, die sich
-   geändert haben.
-2. **Abfragen beantworten:** terminal-browser fragt beim Start, ob das Terminal kitty-Grafik kann
-   und wie groß eine Zelle in Pixeln ist. tbssh antwortet passend, mit 10×20 px pro Zelle. Das ist
-   genau das Sixel-Raster von Windows Terminal.
-3. **Pixelgröße melden:** Die echte Fenstergröße in Pixeln geht über die SSH-Verbindung an den
-   Server, auch beim Ändern der Fenstergröße.
+## Why
 
-Auf dem Server muss nichts installiert werden.
+terminal-browser draws web pages exclusively with the
+[kitty graphics protocol](https://sw.kovidgoyal.net/kitty/graphics-protocol/). Windows Terminal does not
+support that protocol, but it has supported **Sixel** since version 1.22. Without a translator,
+terminal-browser falls back to a coarse text mode when you connect from Windows.
 
-## Voraussetzungen
+## How it works
 
-- Windows 10/11 mit **Windows Terminal 1.22 oder neuer**
-- **PowerShell 7** (auch 7 Preview)
-- der Windows-eigene **OpenSSH-Client** (normalerweise vorinstalliert, `ssh -V`). tbssh liest
-  darüber deine `~/.ssh/config` aus.
-- zum Bauen: **Go** (`winget install GoLang.Go`)
+```
+ Linux server                         Windows
+┌──────────────────┐   SSH   ┌──────────────────────────────────────┐   ┌──────────────────┐
+│ terminal-browser │ ──────► │ tbssh                                │   │ Windows Terminal │
+│  (kitty graphics)│         │  VT tokenizer ─► text passes through ├──►│  (text + Sixel)  │
+│                  │ ◄────── │       └─► kitty cmds ─► compositor   │   │                  │
+└──────────────────┘ replies │                  └─► Sixel encoder ──┘   └──────────────────┘
+                     + size  └──────────────────────────────────────┘
+```
+
+tbssh sits between the server and Windows Terminal and does three things on top of forwarding bytes:
+
+1. **Translates graphics.** kitty images, partial frame updates and delete commands go into a local
+   compositor (images, placements, z-order). The result is emitted as Sixel, and only pixels that
+   changed are sent to the terminal.
+2. **Answers capability queries.** On startup terminal-browser asks whether the terminal speaks kitty
+   graphics and how large a cell is in pixels. tbssh answers on the terminal's behalf with a 10×20 px
+   cell, exactly Windows Terminal's Sixel grid.
+3. **Reports pixel size.** The real window size in pixels goes to the server in the PTY request and on
+   every resize, so terminal-browser renders at the right resolution.
+
+## Requirements
+
+- Windows 10/11 with **Windows Terminal 1.22 or newer**
+- **PowerShell 7.2+** (PowerShell 7 Preview works too)
+- The built-in **Windows OpenSSH client** (`ssh -V`). tbssh uses it to resolve your `~/.ssh/config`
+  and hands everything it does not handle itself over to it.
+- To build from source: **Go** (`winget install GoLang.Go`)
 
 ## Installation
 
+### Option A: prebuilt release (no Go needed)
+
+1. Download `tbssh-<version>-windows-amd64.zip` (or `-arm64`) from the
+   [latest release](https://github.com/zfzfg/tbssh/releases/latest).
+2. Extract it and run the installer in PowerShell 7:
+
+   ```powershell
+   cd <extracted folder>
+   .\install.ps1
+   ```
+
+### Option B: from source
+
 ```powershell
-cd <dieses Repository>
-.\scripts\install.ps1
+git clone https://github.com/zfzfg/tbssh.git
+cd tbssh
+.\scripts\install.ps1           # builds with Go; without Go it downloads the latest release
 ```
 
-Das Skript baut `tbssh.exe` und installiert das Modul `TerminalBrowserSsh` nach
-`Dokumente\PowerShell\Modules`. Außerdem trägt es `Import-Module TerminalBrowserSsh` in dein
-PowerShell-Profil ein; PowerShell 7 und 7 Preview nutzen dasselbe Profil. In jedem neuen Fenster
-läuft `ssh` dann über tbssh.
+Either way the installer puts the `TerminalBrowserSsh` module into `Documents\PowerShell\Modules` and adds
+`Import-Module TerminalBrowserSsh` to your PowerShell profile (shared by PowerShell 7 and 7 Preview).
+From then on, `ssh` in every new window runs through tbssh. Pass `-NoProfile` to skip the profile change.
 
-Danach kurz prüfen:
+### Option C: just the binary
 
 ```powershell
-Test-TbSsh        # meldet, ob Windows Terminal Sixel kann, und die Zellgröße
-Show-TbSshDemo    # Farbverlauf mit Gitter und eine gelbe Kugel, gezeichnet über die Bridge
+go install github.com/zfzfg/tbssh/cmd/tbssh@latest
 ```
 
-## Benutzung
+This gives you `tbssh.exe` without the PowerShell shim; call it like `ssh`.
+
+## Quick check
+
+```powershell
+Test-TbSsh        # reports whether Windows Terminal supports Sixel, and the cell size
+Show-TbSshDemo    # draws a gradient, a grid and a yellow ball through the bridge
+```
+
+## Usage
 
 ```powershell
 ssh user@server
-# auf dem Server:
+# on the server:
 terminal-browser open https://example.com
 ```
 
-### Optional: weniger Bandbreite
+### Optional: less bandwidth
 
-Ohne weitere Einstellung schickt terminal-browser über SSH bei jeder Änderung das ganze Bild.
-Mit einem kleinen Eintrag im Shell-Profil auf dem Server schickt es nur die geänderten Bereiche:
+By default terminal-browser re-sends the whole frame over SSH on every change. A small snippet in the
+server's shell profile makes it send only the regions that changed:
 
 ```powershell
-Install-TbSshRemote user@server     # wieder entfernen: Uninstall-TbSshRemote user@server
+Install-TbSshRemote user@server     # undo with: Uninstall-TbSshRemote user@server
 ```
 
-Der Eintrag greift nur, wenn du über tbssh verbunden bist. tbssh sendet dafür
-`LC_TERMINAL=tbssh`; das akzeptiert der Standard-sshd (`AcceptEnv LANG LC_*`).
+The snippet only takes effect in sessions opened through tbssh. tbssh marks those by sending
+`LC_TERMINAL=tbssh`, which a default sshd accepts (`AcceptEnv LANG LC_*`).
 
-## Was an ssh.exe weitergereicht wird
+## What gets handed to ssh.exe
 
-tbssh übernimmt nur **interaktive Sitzungen mit Terminal**. Alles andere startet unverändert das
-echte `ssh.exe`, zum Beispiel:
+tbssh only takes over **interactive sessions with a terminal**. Everything else runs the real
+`ssh.exe` unchanged, for example:
 
-- Befehle ohne Terminal: `ssh host ls`, Pipes, Umleitungen, `-T`
+- commands without a TTY: `ssh host ls`, pipes, redirects, `-T`
 - `-N`, `-f`, `-W`, `-X`/`-Y`, `-O`/`-M`/`-S`, `-s`, `-G`, `-V`
-- SessionType, LocalCommand und ControlMaster aus der Konfiguration
+- `SessionType`, `LocalCommand` and `ControlMaster` from your config
 
-scp, sftp und git benutzen ohnehin direkt `ssh.exe`.
+scp, sftp and git call `ssh.exe` directly anyway.
 
-Im interaktiven Modus unterstützt tbssh:
+In interactive mode tbssh supports:
 
-- Konfiguration: alles, was `ssh -G` auflöst (Host, HostName, User, Port, IdentityFile,
-  IdentitiesOnly, Include, Match, `-o …`)
-- Anmeldung: Windows-ssh-agent, Schlüsseldateien mit Passphrase-Abfrage, Zertifikate,
-  Keyboard-Interactive (2FA), Passwort
-- known_hosts mit StrictHostKeyChecking: `ask`, `yes`, `accept-new`, `no`
-- ProxyJump und ProxyCommand
-- ForwardAgent (`-A`), `-L`, `-R`, `-D`
-- SendEnv/SetEnv, ServerAliveInterval
-- Escape-Zeichen `~.` und `~?`; der Exit-Code der Gegenseite wird durchgereicht
-
-Zum Umgehen: `ssh.exe …` aufrufen oder `Disable-TbSshShim` (nur für das aktuelle Fenster).
-Dauerhaft abschalten: `$env:TBSSH_NO_SHIM = 1` vor dem `Import-Module` setzen, oder die Zeile aus
-dem Profil entfernen.
-
-## Einstellungen (Umgebungsvariablen)
-
-| Variable | Bedeutung |
+| Area | Supported |
 |---|---|
-| `TBSSH_GRAPHICS=auto\|on\|off` | Grafik-Übersetzung. `auto` (Standard) schaltet sie ein, wenn das Terminal Sixel meldet. |
-| `TBSSH_FPS=60` | Bildraten-Grenze für nicht synchronisierte Updates |
-| `TBSSH_SSH=pfad` | anderer OpenSSH-Client für Konfiguration und Weitergabe |
-| `TBSSH_DEBUG=1` | Log nach `%LOCALAPPDATA%\tbssh\tbssh.log`, mit Statistik alle 5 s |
-| `TBSSH_RECORD=datei` | rohe Server-Ausgabe aufzeichnen; abspielen mit `tbssh --replay datei` |
+| Configuration | everything `ssh -G` resolves: `Host`, `HostName`, `User`, `Port`, `IdentityFile`, `IdentitiesOnly`, `Include`, `Match`, `-o …` |
+| Authentication | Windows ssh-agent, key files with passphrase prompt, certificates, keyboard-interactive (2FA), password |
+| Host keys | `known_hosts` with `StrictHostKeyChecking` `ask`, `yes`, `accept-new`, `no` |
+| Proxies | `ProxyJump`, `ProxyCommand` |
+| Forwarding | `ForwardAgent` (`-A`), `-L`, `-R`, `-D` |
+| Session | `SendEnv`/`SetEnv`, `ServerAliveInterval`, escape sequences `~.` and `~?`, remote exit code |
 
-## Bekannte Grenzen
+## Configuration
 
-- **Tastenkürzel von Windows Terminal** haben Vorrang, z. B. `ctrl+shift+f` (Suche),
-  `ctrl+shift+t` und `ctrl+shift+w`. Löse sie in den WT-Einstellungen unter „Aktionen“, oder nutze
-  die Befehlspalette von terminal-browser (`ctrl+k`).
-- Windows Terminal unterstützt das kitty-Tastaturprotokoll nicht. Einige Kombinationen sind deshalb
-  nicht unterscheidbar, z. B. `ctrl+shift+i` und Tab; für die DevTools nimm `F12`.
-- **Mauspositionen** kommen zellgenau an, nicht pixelgenau.
-- Bei **Windows-Skalierung über 100 %** wirkt das Bild etwas weich: Windows Terminal zeichnet Sixel
-  in einem festen 10×20-Raster und skaliert es auf die Schriftgröße.
-- Die Farben laufen über eine feste 256-Farben-Palette mit leichtem Dithering. Text bleibt scharf,
-  Fotos zeigen leichtes Raster.
-- Animierte kitty-Bilder (Frames außer dem ersten) und Unicode-Platzhalter werden nicht angezeigt.
+| Environment variable | Meaning |
+|---|---|
+| `TBSSH_GRAPHICS=auto\|on\|off` | Graphics translation. `auto` (default) enables it when the terminal reports Sixel support. |
+| `TBSSH_FPS=60` | Frame-rate cap for unsynchronized updates |
+| `TBSSH_SSH=path` | Use a different OpenSSH client for config resolution and pass-through |
+| `TBSSH_DEBUG=1` | Log to `%LOCALAPPDATA%\tbssh\tbssh.log`, with statistics every 5 s |
+| `TBSSH_RECORD=file` | Record raw server output; replay it with `tbssh --replay file` |
+| `TBSSH_NO_SHIM=1` | Set before `Import-Module` to load the module without replacing `ssh` |
 
-## Aufbau
+### Bypassing and uninstalling
+
+- One command: call `ssh.exe …` explicitly.
+- Current window: `Disable-TbSshShim` (turn back on with `Enable-TbSshShim`).
+- Everywhere: run `uninstall.ps1` (in the release ZIP, or `scripts\uninstall.ps1` in the repo). It removes
+  the module and the profile line. Run `Uninstall-TbSshRemote user@server` first for servers where you
+  used `Install-TbSshRemote`.
+
+## Known limitations
+
+- **Windows Terminal key bindings win**, e.g. `ctrl+shift+f` (search), `ctrl+shift+t`, `ctrl+shift+w`.
+  Unbind them in Windows Terminal under *Settings → Actions*, or use terminal-browser's command palette
+  (`ctrl+k`).
+- Windows Terminal does not implement the kitty keyboard protocol, so some combinations are
+  indistinguishable, e.g. `ctrl+shift+i` and Tab. Use `F12` for DevTools.
+- **Mouse positions** are reported per cell, not per pixel.
+- With **Windows display scaling above 100 %** the image looks slightly soft: Windows Terminal draws
+  Sixel on a fixed 10×20 grid and scales it to the font size.
+- Colors go through a fixed 256-color palette with light dithering. Text stays crisp, photos show a
+  faint pattern.
+- Animated kitty images (frames other than the first) and Unicode placeholders are not shown.
+
+## Troubleshooting
+
+- `tbssh --doctor` (or `Test-TbSsh`) checks Sixel support and the cell size reported by the terminal.
+- No graphics, only text? Make sure you are in Windows Terminal ≥ 1.22, not the legacy console host, and
+  try `TBSSH_GRAPHICS=on`.
+- Set `TBSSH_DEBUG=1` and look at `%LOCALAPPDATA%\tbssh\tbssh.log`.
+- For rendering bugs, record a session with `TBSSH_RECORD=session.bin`, reproduce the problem, and
+  replay it locally with `tbssh --replay session.bin`. Attaching that file to an issue helps a lot
+  (it contains everything the server sent, so check it for anything private first).
+
+## Development
 
 ```
-cmd/tbssh              Einstiegspunkt
-internal/app           Sitzung, Weitergabe an ssh.exe, --doctor/--demo/--replay
-internal/sshclient     ssh -G, Verbindung, Anmeldung, known_hosts, Weiterleitungen, PTY mit Pixelgröße
-internal/console       Windows-Konsole: Raw-Modus, Eingabe, Größe, Terminal-Abfragen
-internal/bridge        Abfangen der kitty-Befehle, Antworten auf Abfragen, Taktung der Ausgabe
-internal/vtstream      byte-genauer VT-Tokenizer und Cursor-Verfolgung
-internal/kitty         kitty-Grafik: Befehle, Chunks, zlib/RGB/RGBA/PNG
-internal/compositor    Bilder, Platzierungen, z-Reihenfolge, Frame-Edits, Löschen
-internal/sixel         Sixel-Encoder (feste Palette, nur geänderte Pixel, DECSDM)
-powershell/            PowerShell-Modul (ssh-Shim, Install-TbSshRemote, …)
-scripts/install.ps1    Bauen und Installieren
+cmd/tbssh              entry point
+internal/app           session, pass-through to ssh.exe, --doctor/--demo/--replay
+internal/sshclient     ssh -G, dialing, auth, known_hosts, forwarding, PTY with pixel size
+internal/console       Windows console: raw mode, input, size, terminal queries
+internal/bridge        intercepting kitty commands, answering queries, output pacing
+internal/vtstream      byte-exact VT tokenizer and cursor tracking
+internal/kitty         kitty graphics: commands, chunking, zlib/RGB/RGBA/PNG
+internal/compositor    images, placements, z-order, frame edits, deletes
+internal/sixel         Sixel encoder (fixed palette, changed pixels only, DECSDM)
+powershell/            PowerShell module (ssh shim, Install-TbSshRemote, …)
+scripts/               install.ps1, uninstall.ps1
 ```
 
-Tests: `go test ./...`. Sie enthalten einen End-to-End-Test mit einem eingebauten SSH-Server, der
-sich wie terminal-browser verhält: Er stellt die kitty-Abfrage, wartet auf die Antworten und
-sendet einen Frame.
+```powershell
+go test ./...
+go build -o bin\tbssh.exe .\cmd\tbssh
+```
 
-Der Sixel-Weg (Display-Modus, transparente Bilder mit nur geänderten Pixeln, feste Palette) folgt
-dem Vorschlag in [zenbu-labs/terminal-browser#205](https://github.com/zenbu-labs/terminal-browser/pull/205),
-mit dem terminal-browser selbst Windows Terminal unterstützen soll.
+The tests include an end-to-end test with an embedded SSH server that behaves like terminal-browser:
+it sends the kitty capability query, waits for the replies, and then sends a frame.
+
+Releases are built by GitHub Actions: pushing a tag `vX.Y.Z` builds amd64 and arm64 ZIPs with a
+`SHA256SUMS.txt` and publishes them as a GitHub release.
+
+## Credits
+
+- [terminal-browser](https://github.com/zenbu-labs/terminal-browser) by zenbu-labs, the program this
+  bridge exists for. tbssh is an independent project and is not affiliated with zenbu-labs.
+- The Sixel path (display mode, transparent images with only changed pixels, fixed palette) follows the
+  proposal in [zenbu-labs/terminal-browser#205](https://github.com/zenbu-labs/terminal-browser/pull/205),
+  which aims to add Windows Terminal support to terminal-browser itself.
+
+## License
+
+[MIT](LICENSE) © 2026 Collin Lerche (zfzfg)

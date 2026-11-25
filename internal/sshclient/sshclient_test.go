@@ -19,7 +19,7 @@ import (
 
 	"golang.org/x/crypto/ssh"
 
-	"tbssh/internal/bridge"
+	"github.com/zfzfg/tbssh/internal/bridge"
 )
 
 func TestParseArgs(t *testing.T) {

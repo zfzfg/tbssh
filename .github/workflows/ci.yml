@@ -1,0 +1,35 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+      - name: gofmt
+        shell: pwsh
+        run: |
+          $files = gofmt -l .
+          if ($files) { $files; throw 'gofmt: files above need formatting' }
+      - run: go vet ./...
+      - run: go test ./...
+      - run: go build -o tbssh.exe ./cmd/tbssh
+      - name: Lint PowerShell
+        shell: pwsh
+        run: |
+          Test-ModuleManifest powershell/TerminalBrowserSsh/TerminalBrowserSsh.psd1 | Out-Null
+          foreach ($f in Get-ChildItem -Recurse -Include *.ps1, *.psm1) {
+            $errors = $null
+            [System.Management.Automation.Language.Parser]::ParseFile($f.FullName, [ref]$null, [ref]$errors) | Out-Null
+            if ($errors) { $errors; throw "parse errors in $f" }
+          }

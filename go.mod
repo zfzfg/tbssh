@@ -1,4 +1,4 @@
-module tbssh
+module github.com/zfzfg/tbssh
 
 go 1.27.4
 

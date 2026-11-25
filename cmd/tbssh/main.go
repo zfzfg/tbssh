@@ -8,7 +8,7 @@ package main
 import (
 	"os"
 
-	"tbssh/internal/app"
+	"github.com/zfzfg/tbssh/internal/app"
 )
 
 func main() {
