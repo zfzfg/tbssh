@@ -26,3 +26,15 @@ func TestEscaper(t *testing.T) {
 		t.Fatal("escape none must pass everything")
 	}
 }
+
+func TestEscaperRedraw(t *testing.T) {
+	e := newEscaper("~")
+	out, act := e.filter([]byte("~r"))
+	if len(out) != 0 || act != escRedraw {
+		t.Fatalf("~r must redraw: %q %d", out, act)
+	}
+	out, act = e.filter([]byte("a~r"))
+	if string(out) != "a~r" || act != escNone {
+		t.Fatalf("mid-line ~r must pass: %q %d", out, act)
+	}
+}

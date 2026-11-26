@@ -6,6 +6,7 @@ import (
 	"encoding/base64"
 	"fmt"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 )
@@ -165,5 +166,92 @@ func TestCursorMovesWithoutC1(t *testing.T) {
 	}
 	if b.screen.X != 3 || b.screen.Y != 1 {
 		t.Fatalf("tracked cursor %d,%d", b.screen.X, b.screen.Y)
+	}
+}
+
+// writeLog records every Write separately.
+type writeLog struct {
+	mu     sync.Mutex
+	writes []string
+}
+
+func (w *writeLog) Write(p []byte) (int, error) {
+	w.mu.Lock()
+	w.writes = append(w.writes, string(p))
+	w.mu.Unlock()
+	return len(p), nil
+}
+
+func (w *writeLog) check(t *testing.T) (images int) {
+	t.Helper()
+	w.mu.Lock()
+	defer w.mu.Unlock()
+	for i, s := range w.writes {
+		starts := strings.Count(s, "\x1bP")
+		ends := strings.Count(s, "\x1b\\")
+		if starts != ends {
+			t.Fatalf("write %d splits a sixel image (%d starts, %d ends)", i, starts, ends)
+		}
+		images += starts
+	}
+	return images
+}
+
+// ConPTY may insert sequences between two writes; an image cut there is
+// printed as text. Every image must therefore leave the bridge in one Write.
+func TestEachImageInOneWrite(t *testing.T) {
+	w := &writeLog{}
+	b := New(w, nil, Options{Cols: 80, Rows: 24, Graphics: true})
+	big := make([]byte, 800*480*4)
+	for i := 0; i < len(big); i += 4 {
+		big[i], big[i+1], big[i+2], big[i+3] = byte(i), byte(i>>8), byte(i>>16), 255
+	}
+	// Synchronized full frame, fed in small chunks like an SSH channel would.
+	frame := "\x1b[?2026h\x1b[H" + transmit("a=T,f=32,o=z,s=800,v=480,t=d,i=1,p=1,C=1,q=2", big) + "\x1b[?2026l"
+	for i := 0; i < len(frame); i += 1000 {
+		b.Write([]byte(frame[i:min(i+1000, len(frame))]))
+	}
+	// Unsynchronized patch drawn by the pacing timer.
+	b.Write([]byte("\x1b[5;5H" + transmit("a=T,f=32,o=z,s=40,v=40,t=d,i=2,p=1,C=1,z=1,q=2", solid(40, 40, 9, 200, 9))))
+	b.Write([]byte("\x1b[5;5H" + transmit("a=T,f=32,o=z,s=40,v=40,t=d,i=3,p=1,C=1,z=2,q=2", solid(40, 40, 200, 9, 9))))
+	time.Sleep(60 * time.Millisecond)
+	b.Repaint()
+	b.Close()
+	if n := w.check(t); n < 3 {
+		t.Fatalf("expected at least 3 images, got %d", n)
+	}
+}
+
+// An image must not be inserted into a string sequence the remote has only
+// partly sent; it is drawn once the string is complete.
+func TestNoImageInsideRemoteString(t *testing.T) {
+	b, s := newBridge(true)
+	b.Write([]byte(transmit("a=T,f=32,o=z,s=80,v=80,t=d,i=1,p=1,C=1,q=2", solid(80, 80, 0, 0, 255)) + "\x1b]0;tit"))
+	time.Sleep(40 * time.Millisecond)
+	b.mu.Lock()
+	early := s.out.String()
+	b.mu.Unlock()
+	if strings.Contains(early, "\x1bP") {
+		t.Fatalf("image written inside an unfinished OSC: %q", early)
+	}
+	b.Write([]byte("le\x07"))
+	time.Sleep(40 * time.Millisecond)
+	b.mu.Lock()
+	out := s.out.String()
+	b.mu.Unlock()
+	osc := strings.Index(out, "\x1b]0;title\x07")
+	img := strings.Index(out, "\x1bP")
+	if osc < 0 || img < osc {
+		t.Fatalf("image must follow the finished OSC: %q", out)
+	}
+}
+
+func TestRepaintRedrawsEverything(t *testing.T) {
+	b, s := newBridge(true)
+	b.Write([]byte("\x1b[?2026h\x1b[H" + transmit("a=T,f=32,o=z,s=80,v=80,t=d,i=1,p=1,C=1,q=2", solid(80, 80, 255, 255, 255)) + "\x1b[?2026l"))
+	s.out.Reset()
+	b.Repaint()
+	if !strings.Contains(s.out.String(), "\x1bP0;1;0q\"1;1;80;80") {
+		t.Fatalf("repaint must send the full image again: %q", s.out.String())
 	}
 }

@@ -233,9 +233,23 @@ func interactive(cfg *sshclient.Config, args *sshclient.Args) int {
 	}
 	defer conn.Close()
 
-	forwards := sshclient.StartForwards(conn, func(format string, a ...any) {
-		fmt.Fprintf(os.Stderr, format+"\r\n", a...)
-	})
+	// Messages during the session go through the bridge once it exists, so
+	// they never land in the middle of an image or another sequence.
+	var notifyMu sync.Mutex
+	var notifyBridge *bridge.Bridge
+	notify := func(format string, a ...any) {
+		msg := fmt.Sprintf(format+"\r\n", a...)
+		notifyMu.Lock()
+		br := notifyBridge
+		notifyMu.Unlock()
+		if br != nil {
+			br.WriteRaw([]byte(msg))
+			return
+		}
+		os.Stderr.WriteString(msg)
+	}
+
+	forwards := sshclient.StartForwards(conn, notify)
 	defer func() {
 		for _, c := range forwards {
 			c.Close()
@@ -293,7 +307,7 @@ func interactive(cfg *sshclient.Config, args *sshclient.Args) int {
 		stdin.Write(p)
 		stdinMu.Unlock()
 	}
-	out := newOutQueue(os.Stdout, 32<<20)
+	out := newOutQueue(con.Writer(), 32<<20)
 	br := bridge.New(out, writeRemote, bridge.Options{
 		Cols: cols, Rows: rows,
 		Graphics:   graphics,
@@ -301,6 +315,9 @@ func interactive(cfg *sshclient.Config, args *sshclient.Args) int {
 		MaxFPS:     maxFPS(),
 		Log:        logf,
 	})
+	notifyMu.Lock()
+	notifyBridge = br
+	notifyMu.Unlock()
 
 	term := os.Getenv("TERM")
 	if term == "" {
@@ -399,6 +416,8 @@ func interactive(cfg *sshclient.Config, args *sshclient.Args) int {
 			switch action {
 			case escHelp:
 				br.WriteRaw([]byte("~?\r\n" + escapeHelp))
+			case escRedraw:
+				br.Repaint()
 			case escDisconnect:
 				disconnectOnce.Do(func() { close(disconnected) })
 				conn.Client.Close()
@@ -408,7 +427,7 @@ func interactive(cfg *sshclient.Config, args *sshclient.Args) int {
 	}()
 
 	if n := cfg.Int("serveraliveinterval", 0); n > 0 {
-		go keepAlive(conn.Client, time.Duration(n)*time.Second, cfg.Int("serveralivecountmax", 3))
+		go keepAlive(conn.Client, time.Duration(n)*time.Second, cfg.Int("serveralivecountmax", 3), notify)
 	}
 
 	sig := make(chan os.Signal, 1)
@@ -467,7 +486,7 @@ func interactive(cfg *sshclient.Config, args *sshclient.Args) int {
 	return code
 }
 
-func keepAlive(c *ssh.Client, every time.Duration, maxMissed int) {
+func keepAlive(c *ssh.Client, every time.Duration, maxMissed int, notify func(string, ...any)) {
 	missed := 0
 	t := time.NewTicker(every)
 	defer t.Stop()
@@ -486,7 +505,7 @@ func keepAlive(c *ssh.Client, every time.Duration, maxMissed int) {
 		case <-time.After(every):
 			missed++
 			if missed >= maxMissed {
-				fmt.Fprintf(os.Stderr, "Timeout, server not responding.\r\n")
+				notify("Timeout, server not responding.")
 				c.Close()
 				return
 			}

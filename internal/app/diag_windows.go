@@ -121,7 +121,7 @@ func demo() int {
 		return 1
 	}
 	cols, rows := con.Size()
-	br := bridge.New(os.Stdout, nil, bridge.Options{Cols: cols, Rows: rows, Graphics: true, Background: caps.Background, MaxFPS: 60})
+	br := bridge.New(con.Writer(), nil, bridge.Options{Cols: cols, Rows: rows, Graphics: true, Background: caps.Background, MaxFPS: 60})
 	W, H := cols*10, rows*20
 
 	keys := make(chan struct{}, 1)
@@ -213,7 +213,7 @@ func replay(path string) int {
 	defer con.Restore()
 	caps := con.Probe(time.Second)
 	cols, rows := con.Size()
-	br := bridge.New(os.Stdout, nil, bridge.Options{Cols: cols, Rows: rows, Graphics: true, Background: caps.Background, MaxFPS: 60})
+	br := bridge.New(con.Writer(), nil, bridge.Options{Cols: cols, Rows: rows, Graphics: true, Background: caps.Background, MaxFPS: 60})
 	start := time.Now()
 	for len(data) > 0 {
 		n := min(len(data), 64<<10)

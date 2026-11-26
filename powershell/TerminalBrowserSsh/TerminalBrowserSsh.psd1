@@ -1,6 +1,6 @@
 @{
     RootModule        = 'TerminalBrowserSsh.psm1'
-    ModuleVersion     = '0.1.0'
+    ModuleVersion     = '0.1.1'
     GUID              = '5b7c2f0e-8a8e-4f43-9d0b-2f6a51c7e1a4'
     Author            = 'Collin Lerche (zfzfg)'
     Copyright         = '(c) 2026 Collin Lerche (zfzfg). MIT License.'

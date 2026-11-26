@@ -1,8 +1,8 @@
 package app
 
 // escaper implements OpenSSH's escape character (default "~") recognized
-// at the start of a line: "~." disconnects, "~?" prints help, "~~" sends a
-// single "~".
+// at the start of a line: "~." disconnects, "~?" prints help, "~r" redraws
+// all images, "~~" sends a single "~".
 type escaper struct {
 	ch      byte
 	enabled bool
@@ -28,6 +28,7 @@ const (
 	escNone = iota
 	escDisconnect
 	escHelp
+	escRedraw
 )
 
 // filter returns the bytes to send and an action found in the input.
@@ -44,6 +45,10 @@ func (e *escaper) filter(in []byte) (out []byte, action int) {
 				return out, escDisconnect
 			case '?':
 				action = escHelp
+				e.atStart = false
+				continue
+			case 'r':
+				action = escRedraw
 				e.atStart = false
 				continue
 			case e.ch:
@@ -67,5 +72,6 @@ func (e *escaper) filter(in []byte) (out []byte, action int) {
 const escapeHelp = "Supported escape sequences:\r\n" +
 	" ~.   - terminate connection\r\n" +
 	" ~?   - this message\r\n" +
+	" ~r   - redraw all images\r\n" +
 	" ~~   - send the escape character by typing it twice\r\n" +
 	"(Note that escapes are only recognized immediately after newline.)\r\n"

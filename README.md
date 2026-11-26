@@ -133,7 +133,7 @@ In interactive mode tbssh supports:
 | Host keys | `known_hosts` with `StrictHostKeyChecking` `ask`, `yes`, `accept-new`, `no` |
 | Proxies | `ProxyJump`, `ProxyCommand` |
 | Forwarding | `ForwardAgent` (`-A`), `-L`, `-R`, `-D` |
-| Session | `SendEnv`/`SetEnv`, `ServerAliveInterval`, escape sequences `~.` and `~?`, remote exit code |
+| Session | `SendEnv`/`SetEnv`, `ServerAliveInterval`, escape sequences `~.`, `~?` and `~r` (redraw images), remote exit code |
 
 ## Configuration
 

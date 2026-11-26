@@ -8,6 +8,7 @@ package console
 import (
 	"bytes"
 	"errors"
+	"io"
 	"os"
 	"regexp"
 	"strconv"
@@ -104,6 +105,34 @@ func (c *Console) Restore() {
 			windows.SetConsoleOutputCP(c.outCP)
 		}
 	})
+}
+
+// Writer returns a writer that hands each buffer to the console in a single
+// WriteFile call, as UTF-8 bytes (MakeRaw sets the code page).
+//
+// os.Stdout is not good enough here: Go splits console writes into pieces of
+// 16000 characters, and ConPTY may insert its own sequences (a cursor
+// position query on resize, focus reports) between two writes. Inside a sixel
+// image that ESC ends the image and the rest of it is printed as text. Keeping
+// every image within one write leaves ConPTY no gap to do that.
+func (c *Console) Writer() io.Writer { return consoleWriter{c.Out} }
+
+type consoleWriter struct{ h windows.Handle }
+
+func (w consoleWriter) Write(p []byte) (int, error) {
+	total := 0
+	for len(p) > 0 {
+		var n uint32
+		if err := windows.WriteFile(w.h, p, &n, nil); err != nil {
+			return total + int(n), err
+		}
+		if n == 0 {
+			return total, io.ErrShortWrite
+		}
+		total += int(n)
+		p = p[n:]
+	}
+	return total, nil
 }
 
 // Size returns the visible window size in cells.

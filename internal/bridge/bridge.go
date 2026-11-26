@@ -113,6 +113,10 @@ func (b *Bridge) Write(p []byte) (int, error) {
 			// The frame is still being written; draw it when it ends, or
 			// after a while if the end never comes.
 			b.schedule(100 * time.Millisecond)
+		} else if b.parser.InSequence() {
+			// The chunk ended inside a sequence that may already be partly
+			// forwarded (an OSC or DCS string); an image here would cut it.
+			b.schedule(10 * time.Millisecond)
 		} else {
 			b.renderPaced()
 		}
@@ -461,6 +465,13 @@ func (b *Bridge) render() {
 	}
 	seq := b.six.Update(b.comp.Canvas, b.comp.Covered, sr, b.opt.Background)
 	b.lastRender = time.Now()
+	if b.timer != nil {
+		// Everything pending is drawn now. A timer left over (for example
+		// the fallback of a synchronized frame) would otherwise hold back
+		// the next paced update until it fires.
+		b.timer.Stop()
+		b.timer = nil
+	}
 	if len(seq) == 0 {
 		return
 	}
@@ -489,6 +500,10 @@ func (b *Bridge) schedule(d time.Duration) {
 		if b.closed || !b.comp.Dirty() {
 			return
 		}
+		if b.parser.InSequence() {
+			b.schedule(10 * time.Millisecond)
+			return
+		}
 		b.render()
 		_ = b.flush()
 	})
@@ -507,6 +522,25 @@ func (b *Bridge) Resize(cols, rows int) {
 	if b.opt.Graphics && b.inBandResize {
 		b.sendSize()
 	}
+}
+
+// Repaint draws every image again from scratch, for when the terminal lost
+// pixels the bridge believes are shown (for example after a sixel image was
+// cut short and printed as text).
+func (b *Bridge) Repaint() {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	if !b.opt.Graphics || b.closed {
+		return
+	}
+	b.six.Forget()
+	b.comp.DamageAll()
+	if b.parser.InSequence() {
+		b.schedule(10 * time.Millisecond)
+		return
+	}
+	b.render()
+	_ = b.flush()
 }
 
 // Close stops pending work and, if the remote program left the terminal in
